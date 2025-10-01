@@ -24,6 +24,16 @@ class vec3:
             res.append(c)
         return res
 
+class faccia:
+    def __init__(self, punti, piano):
+        self.punti = punti
+        self.piano = piano
+        self.connesse = []
+
+def normalizza(vec):
+    vl = math.sqrt(sum([x**2 for x in vec]))
+    return [x/vl for x in vec]
+
 def determ(mat):
     return (((mat[0][0]*mat[1][1]*mat[2][2])+(mat[0][1]*mat[1][2]*mat[2][0])+(mat[0][2]*mat[1][0]*mat[2][1])) -
             ((mat[0][2]*mat[1][1]*mat[2][0])+(mat[0][1]*mat[1][0]*mat[2][2])+(mat[0][0]*mat[1][2]*mat[2][1])))
@@ -58,7 +68,39 @@ def invert_mat(mat):
         res.append(solve(sis))
     return(transpose(res))
 
-def main():
+def genera_punti(spazi):
+    punti_spaziati = []
+    for sn in itertools.combinations(enumerate(spazi), 3):
+        sg = [a[:3] + [-a[3],] for a in [x[1] for x in sn]]
+        if determ([s[:3] for s in sg]) == 0:
+            continue
+        point = (solve(sg),[x[0] for x in sn])
+        ammesso = True
+        for s in spazi:
+            if ((s[0]*point[0][0])+(s[1]*point[0][1])+(s[2]*point[0][2]))+s[3] < -(10**(-10)):
+                ammesso = False
+        if ammesso:
+            punti_spaziati.append(point)
+    return punti_spaziati
+
+def genera_segmenti(punti):
+    segmenti_spaziati = []
+    for n0, p0 in enumerate(punti):
+        for n1, p1 in list(enumerate(punti))[n0:]:
+            n_com = 0
+            com = []
+            for s in p0[1]:
+                if s in p1[1]:
+                    n_com += 1
+                    com.append(s)
+            if n_com == 2:
+                segmenti_spaziati.append(((n0, n1),
+                                 (com[0], com[1])))
+    return segmenti_spaziati
+
+
+
+def sculpt():
     pygame.init()
     pygame.font.init()
     font = pygame.font.SysFont('Monospace', 30)
@@ -108,32 +150,9 @@ def main():
 
             lookvector = (-math.cos(latitudine)*math.sin(longitudine),-math.sin(latitudine),math.cos(latitudine)*math.cos(longitudine))
 
-            punti_spaziati = []
-            for sn in itertools.combinations(enumerate(semispazi), 3):
-                sg = [a[:3] + [-a[3],] for a in [x[1] for x in sn]]
-                if determ([s[:3] for s in sg]) == 0:
-                    continue
-                point = (solve(sg),[x[0] for x in sn])
-                ammesso = True
-                for s in semispazi:
-                    if ((s[0]*point[0][0])+(s[1]*point[0][1])+(s[2]*point[0][2]))+s[3] < -(10**(-10)):
-                        ammesso = False
-                if ammesso:
-                    punti_spaziati.append(point)
+            punti_spaziati = genera_punti(semispazi)
 
-            segmenti_spaziati = []
-            for n0, p0 in enumerate(punti_spaziati):
-                for n1, p1 in list(enumerate(punti_spaziati))[n0:]:
-                    n_com = 0
-                    com = []
-                    for s in p0[1]:
-                        if s in p1[1]:
-                            n_com += 1
-                            com.append(s)
-                    if n_com == 2:
-                        segmenti_spaziati.append(((n0, n1),
-                                         (com[0], com[1])))
-
+            segmenti_spaziati = genera_segmenti(punti_spaziati)
 
             punti = [vec3(p[0][0],p[0][1],p[0][2]) for p in punti_spaziati]
 
@@ -229,5 +248,66 @@ def main():
 
     pygame.quit()
 
+def preview():
+    pygame.init()
+    pygame.font.init()
+    screen = pygame.display.set_mode((707, 1000))
+    clock = pygame.time.Clock()
+
+    with open(sys.argv[2], "r") as f:
+        modello = json.load(f)
+
+    punti = genera_punti(modello)
+    segmenti = genera_segmenti(punti)
+    
+    primo_piano = punti[0][1][0]
+    prima_faccia = faccia([p[0] for p in punti if primo_piano in p[1]], primo_piano)
+
+    occupate = {primo_piano} 
+    facce = [prima_faccia]
+    completo = False
+    while not completo:
+        completo = True
+
+        facce_nuove = []
+        for f in facce:
+            s_collegati = [seg for seg in segmenti if f.piano in seg[1]]
+            s_collegati = [seg for seg in s_collegati if (seg[1][0] not in occupate) or (seg[1][1] not in occupate)]
+
+            f_collegate = []
+            for s in s_collegati:
+                piano = [p for p in s[1] if p != f.piano][0]
+                punti_faccia = [p[0] for n,p in enumerate(punti) if piano in p[1] and n not in s[0]]
+                punti_spigolo = [punti[n][0] for n in s[0]]
+                vettore_spigolo = normalizza([c[1]-c[0] for c in zip(punti_spigolo[0], punti_spigolo[1])])
+                vettore_altro = normalizza([c[1]-c[0] for c in zip(punti_spigolo[0], punti_faccia[0])])
+                nf = faccia(punti_faccia, piano)
+                facce_nuove.append(nf)
+                f.connesse.append(nf)
+                occupate.add(piano)
+                completo = False
+        facce = facce_nuove
+
+    def reprint(fa, indent):
+        print("\t"*indent + "punti: " + str(fa.punti))
+        print("\t"*indent + "piano: " + str(fa.piano))
+        for ff in fa.connesse:
+            reprint(ff, indent+1)
+
+    reprint(prima_faccia,0)
+
+    devochiudere = False
+    while not devochiudere:
+        screen.fill('black')
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                devochiudere = True
+                break
+
+        clock.tick(30)
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1] == "edit":
+        sculpt()
+    elif sys.argv[1] == "view":
+        preview()
